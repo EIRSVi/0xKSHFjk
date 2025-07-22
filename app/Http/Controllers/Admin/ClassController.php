@@ -19,7 +19,7 @@ class ClassController extends Controller
     public function create()
     {
         $subjects = Subject::where('status', 'active')->orderBy('name')->get();
-        $teachers = User::where('role', 'teacher')->where('status', 'active')->orderBy('name')->get();
+        $teachers = User::where('role', 'teacher')->where('status', 'active')->orderBy('first_name')->get();
         return view('admin.classes.create', compact('subjects', 'teachers'));
     }
 
@@ -27,12 +27,13 @@ class ClassController extends Controller
     {
         $request->validate([
             'name' => 'required|string|max:255',
-            'code' => 'required|string|max:20|unique:classes',
+            'class_code' => 'nullable|string|max:20|unique:classes,code',
             'description' => 'nullable|string',
             'subject_id' => 'required|exists:subjects,id',
             'teacher_id' => 'required|exists:users,id',
             'max_students' => 'nullable|integer|min:1|max:1000',
-            'status' => 'required|in:active,inactive',
+            'status' => 'required|in:active,inactive,archived',
+            'schedule' => 'nullable|string',
         ]);
 
         // Verify teacher role
@@ -41,14 +42,23 @@ class ClassController extends Controller
             return back()->withErrors(['teacher_id' => 'Selected user must be a teacher.']);
         }
 
+        // Generate class code if not provided
+        $classCode = $request->class_code ?: strtoupper(substr($request->name, 0, 3) . rand(100, 999));
+
         ClassModel::create([
             'name' => $request->name,
-            'code' => strtoupper($request->code),
+            'code' => $classCode,
             'description' => $request->description,
             'subject_id' => $request->subject_id,
             'teacher_id' => $request->teacher_id,
-            'max_students' => $request->max_students,
+            'grade_level' => null,
+            'academic_year' => date('Y') . '-' . (date('Y') + 1),
+            'semester' => 'full_year',
+            'max_students' => $request->max_students ?? 50,
             'status' => $request->status,
+            'schedule' => $request->schedule,
+            'room' => null,
+            'created_by' => auth()->id(),
         ]);
 
         return redirect()->route('admin.classes.index')
@@ -57,14 +67,19 @@ class ClassController extends Controller
 
     public function show(ClassModel $class)
     {
-        $class->load(['subject', 'teacher', 'enrollments.student', 'quizzes']);
-        return view('admin.classes.show', compact('class'));
+        $class->load(['subject', 'teacher', 'enrollments.user', 'quizzes']);
+        $availableStudents = User::where('role', 'student')
+            ->where('status', 'active')
+            ->whereNotIn('id', $class->enrollments()->pluck('user_id'))
+            ->orderBy('first_name')
+            ->get();
+        return view('admin.classes.show', compact('class', 'availableStudents'));
     }
 
     public function edit(ClassModel $class)
     {
         $subjects = Subject::where('status', 'active')->orderBy('name')->get();
-        $teachers = User::where('role', 'teacher')->where('status', 'active')->orderBy('name')->get();
+        $teachers = User::where('role', 'teacher')->where('status', 'active')->orderBy('first_name')->get();
         return view('admin.classes.edit', compact('class', 'subjects', 'teachers'));
     }
 
@@ -72,12 +87,13 @@ class ClassController extends Controller
     {
         $request->validate([
             'name' => 'required|string|max:255',
-            'code' => 'required|string|max:20|unique:classes,code,' . $class->id,
+            'class_code' => 'nullable|string|max:20|unique:classes,code,' . $class->id,
             'description' => 'nullable|string',
             'subject_id' => 'required|exists:subjects,id',
             'teacher_id' => 'required|exists:users,id',
             'max_students' => 'nullable|integer|min:1|max:1000',
-            'status' => 'required|in:active,inactive',
+            'status' => 'required|in:active,inactive,archived',
+            'schedule' => 'nullable|string',
         ]);
 
         // Verify teacher role
@@ -86,17 +102,21 @@ class ClassController extends Controller
             return back()->withErrors(['teacher_id' => 'Selected user must be a teacher.']);
         }
 
+        // Generate class code if not provided
+        $classCode = $request->class_code ?: $class->code;
+
         $class->update([
             'name' => $request->name,
-            'code' => strtoupper($request->code),
+            'code' => $classCode,
             'description' => $request->description,
             'subject_id' => $request->subject_id,
             'teacher_id' => $request->teacher_id,
-            'max_students' => $request->max_students,
+            'max_students' => $request->max_students ?? 50,
             'status' => $request->status,
+            'schedule' => $request->schedule,
         ]);
 
-        return redirect()->route('admin.classes.index')
+        return redirect()->route('admin.classes.show', $class)
             ->with('success', 'Class updated successfully.');
     }
 
@@ -116,17 +136,17 @@ class ClassController extends Controller
 
     public function enrollments(ClassModel $class)
     {
-        $class->load(['enrollments.student']);
+        $class->load(['enrollments.user']);
         $availableStudents = User::where('role', 'student')
             ->where('status', 'active')
             ->whereNotIn('id', $class->enrollments()->pluck('user_id'))
-            ->orderBy('name')
+            ->orderBy('first_name')
             ->get();
 
         return view('admin.classes.enrollments', compact('class', 'availableStudents'));
     }
 
-    public function enrollStudent(Request $request, ClassModel $class)
+    public function enroll(Request $request, ClassModel $class)
     {
         $request->validate([
             'student_id' => 'required|exists:users,id',
@@ -149,16 +169,14 @@ class ClassController extends Controller
 
         $class->enrollments()->create([
             'user_id' => $student->id,
-            'enrolled_at' => now(),
         ]);
 
-        return redirect()->route('admin.classes.enrollments', $class)
-            ->with('success', 'Student enrolled successfully.');
+        return back()->with('success', 'Student enrolled successfully.');
     }
 
-    public function unenrollStudent(ClassModel $class, $studentId)
+    public function unenroll(ClassModel $class, User $user)
     {
-        $enrollment = $class->enrollments()->where('user_id', $studentId)->first();
+        $enrollment = $class->enrollments()->where('user_id', $user->id)->first();
         
         if (!$enrollment) {
             return back()->withErrors(['error' => 'Student is not enrolled in this class.']);
@@ -166,7 +184,6 @@ class ClassController extends Controller
 
         $enrollment->delete();
 
-        return redirect()->route('admin.classes.enrollments', $class)
-            ->with('success', 'Student unenrolled successfully.');
+        return back()->with('success', 'Student unenrolled successfully.');
     }
 }

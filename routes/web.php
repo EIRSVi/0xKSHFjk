@@ -64,8 +64,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     
     // Class Enrollment Management
     Route::get('classes/{class}/enrollments', [AdminClassController::class, 'enrollments'])->name('admin.classes.enrollments');
-    Route::post('classes/{class}/enroll', [AdminClassController::class, 'enrollStudent'])->name('admin.classes.enroll');
-    Route::delete('classes/{class}/unenroll/{student}', [AdminClassController::class, 'unenrollStudent'])->name('admin.classes.unenroll');
+    Route::post('classes/{class}/enroll', [AdminClassController::class, 'enroll'])->name('admin.classes.enroll');
+    Route::delete('classes/{class}/unenroll/{user}', [AdminClassController::class, 'unenroll'])->name('admin.classes.unenroll');
     
     // Reports
     Route::prefix('reports')->group(function () {
