@@ -1,6 +1,7 @@
 # Online Quiz System (OQS)
 
 A comprehensive role-based educational quiz management platform built with Laravel 12.x, featuring modern Material Design UI and robust functionality for administrators, teachers, and students.
+![Cover Image](image.png)
 
 ## 🚀 Features
 
